@@ -5,9 +5,20 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-
+[profile.release]
+debug = false
+debug-assertions = false
+# lto does help but not by much with pcre2
+lto = true
+codegen-units=1
+opt-level = 3
+trustflags = ["-C", "target-cpu=native"]
 
 [dependencies]
 csv = "1.1.6"
 structopt = {version = "0.3.1", feature=["color","termsize","wrap_help"]}
 anyhow = "~1"
+url = "~2"
+humantime="2.1.0"
+lexical = "5.2.2"
+crossbeam-channel = "0.5.1"

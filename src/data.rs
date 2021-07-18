@@ -1,8 +1,12 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 use std::{cmp::{max, min}, collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap}, fmt::Display, path::PathBuf, time::{Duration, SystemTime}};
 
 use anyhow::{anyhow, Context, Result};
 use csv::{ByteRecord, StringRecord};
 use humantime::FormattedDuration;
+use url::Url;
 
 use crate::cli::CliCfg;
 
@@ -21,7 +25,7 @@ pub struct FileInfo {
 
 pub fn uri_to_path(path: &str) -> PathBuf {
     match url::Url::parse(path) {
-        Err(e) => PathBuf::from(path),
+        Err(_e) => PathBuf::from(path),
         Ok(u) => PathBuf::from(u.path()),
     }
 }
@@ -47,30 +51,30 @@ impl FileInfo {
             return Err(anyhow!("field count is wrong at {}", raw_rec.len()));
         }
         Ok(FileInfo {
-            path: PathBuf::from(&raw_rec[1]),
+            path: PathBuf::from(Url::parse(&raw_rec[1])?.path()),
             stat: FileStat {
                 file_type: {
-                    if raw_rec[0].len() != 1 {
-                        return Err(anyhow!("error in reading file type, got LEN != 1\"{}\"", &raw_rec[0]));
-                    }
-                    let b = raw_rec[0].as_bytes()[0];
-                    b as char
-
-                    // let c = raw_rec[0]
-                    //     .chars()
-                    //     .next()
-                    //     .context("record with no character type")?;
-                    // match c {
-                    //     'f' | 'F' => 'F', // this stuff is easier than to uppercase - yikes
-                    //     'd' | 'D' => 'D',
-                    //     's' | 'S' => 'S',
-                    //     _ => {
-                    //         return Err(anyhow!(
-                    //             "error in record where file type is not known but is {}",
-                    //             c
-                    //         ))
-                    //     }
+                    // if raw_rec[0].len() != 1 {
+                    //     return Err(anyhow!("error in reading file type, got LEN != 1\"{}\"", &raw_rec[0]));
                     // }
+                    // let b = raw_rec[0].as_bytes()[0];
+                    // b as char
+
+                    let c = raw_rec[0]
+                        .chars()
+                        .next()
+                        .context("record with no character type")?;
+                    match c {
+                        'f' | 'F' => 'F', // this stuff is easier than to uppercase - yikes
+                        'd' | 'D' => 'D',
+                        's' | 'S' => 'S',
+                        _ => {
+                            return Err(anyhow!(
+                                "error in record where file type is not known but is {}",
+                                c
+                            ))
+                        }
+                    }
                 },
                 size: raw_rec[2].parse::<u64>().with_context(||format!("unable parse number for size: \"{}\"", &raw_rec[2]))?,
                 mod_time: raw_rec[3]
@@ -83,13 +87,13 @@ impl FileInfo {
             },
         })
     }
-    pub fn isDir(self: &Self) -> bool {
+    pub fn is_dir(self: &Self) -> bool {
         self.stat.file_type == 'D'
     }
-    pub fn isFile(self: &Self) -> bool {
+    pub fn is_file(self: &Self) -> bool {
         self.stat.file_type == 'F'
     }
-    pub fn isSym(self: &Self) -> bool {
+    pub fn is_sym(self: &Self) -> bool {
         self.stat.file_type == 'S'
     }
 }
@@ -159,7 +163,7 @@ impl DirStat {
             self.direct.youngest = max(self.direct.oldest, stat.mod_time);
         }
     }
-    pub fn mergeFileStat(self: &mut Self, stat: &FileStat, direct: bool) {
+    pub fn merge_file_stat(self: &mut Self, stat: &FileStat, direct: bool) {
         self.recurse.entry_cnt += 1;
         self.recurse.size += stat.size;
         self.recurse.oldest = min(self.recurse.oldest, stat.mod_time);
@@ -260,14 +264,14 @@ impl Tracking {
         }
     }
 
-    pub fn processEntry(self: &mut Self, fi: FileInfo) -> Result<()> {
-        if fi.isDir() {
+    pub fn process_entry(self: &mut Self, fi: FileInfo) -> Result<()> {
+        if fi.is_dir() {
             if self.dtree.contains_key(&fi.path) {
                 eprintln!("duplicate path - better error handling?  {}", fi.path.to_string_lossy());               
             } else {
                 self.dtree.insert(fi.path, DirStat::new(&fi.stat));
             }
-        } else if fi.isFile() || fi.isSym() {
+        } else if fi.is_file() || fi.is_sym() {
             if let Some(p_path) = fi.path.parent() {
                 match self.dtree.get_mut(p_path) {
                     Some(stat) => {
@@ -276,7 +280,6 @@ impl Tracking {
                     None => eprintln!("parent not found for {}", fi.path.to_string_lossy()),
                 }
             }
-            let path = fi.path;
         }
         Ok(())
     }

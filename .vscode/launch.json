@@ -19,7 +19,7 @@
                     "kind": "bin"
                 }
             },
-            "args": ["-n", "10", "-f", "C:\\Users\\sflan\\Downloads\\qep_usage"],
+            "args": ["-t", "1", "-n", "10", "-f", "C:\\Users\\sflan\\Downloads\\qep_usage.sm"],
             "cwd": "${workspaceFolder}"
         },
         {

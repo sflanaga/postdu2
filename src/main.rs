@@ -106,27 +106,30 @@ fn main() -> Result<()> {
 
     //})).collect::<Vec<_>>();
 
+    let mut field_count = 0 ;
     for rec in rdr.records() {
         line_count += 1;
         if line_count % 1_000_000 == 0 {
             println!("at line {}", line_count);
         }
-        // if line_count > 1_000_000 {
-        //     break;
-        // }
+        if line_count > 10_000_000 {
+            break;
+        }
+
         match rec {
             Ok(sr) => {
+                field_count += sr.len();
                 send_sr.send(Some((line_count, sr)))?;
             }
             Err(_e) => eprintln!("error reading record: {} ", line_count),
         }
     }
     dbg!("sending Nones");
-    for _ in 0..cfg.num_rec_threads {
-        send_sr.send(None)?;
+    (0..cfg.num_rec_threads).for_each(|i|send_sr.send(None).expect("send_sr - for shutdown"));
+    for t in ct {
+        let _ = t.join();
     }
     send_fi.send(None)?;
-
 
     let _ = data_thread.join();
     println!("{:?}", start.elapsed());

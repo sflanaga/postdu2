@@ -91,7 +91,7 @@ fn main() -> Result<()> {
         loop {
             match recv_fi.recv() {
                 Ok(msg) => match msg {
-                    Some((line, fi)) => match data.process_entry(fi) {
+                    Some((line, fi)) => match data.process_entry(fi, &cfg_c) {
                         Err(e) => println!("error on line {} due to {}", line, e),
                         _ => {}
                     },
@@ -112,7 +112,7 @@ fn main() -> Result<()> {
         if line_count % 1_000_000 == 0 {
             println!("at line {}", line_count);
         }
-        if line_count > 10_000_000 {
+        if cfg.limit_input>0 && line_count > cfg.limit_input  {
             break;
         }
 

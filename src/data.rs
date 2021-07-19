@@ -294,35 +294,48 @@ pub fn get_age_delta(old: u64, new: u64) -> String {
 
 pub struct Tracking {
     dtree: HashMap<PathBuf, DirStat>,
-    direct_dir_size: BinaryHeap<TrackedPath>,
-    direct_dir_count: BinaryHeap<TrackedPath>,
     root: PathBuf,
+    largest_file: BinaryHeap<TrackedPath>,
+    num_entries: u64,
+    total_file_space: u64,
+    parent_not_found: u64,
+    parent_filled_in_later: u64,
 }
 
 impl Tracking {
     pub fn new() -> Tracking {
         Tracking {
             dtree: HashMap::new(),
-            direct_dir_count: BinaryHeap::new(),
-            direct_dir_size: BinaryHeap::new(),
             root: PathBuf::from("/"),
+            num_entries: 0,
+            total_file_space: 0,
+            largest_file: BinaryHeap::new(),
+            parent_not_found: 0,
+            parent_filled_in_later: 0,
         }
     }
 
-    pub fn process_entry(self: &mut Self, fi: FileInfo) -> Result<()> {
+    pub fn process_entry(self: &mut Self, fi: FileInfo, cli: &CliCfg) -> Result<()> {
+
+        self.total_file_space += fi.stat.size;
+        self.num_entries += 1;
 
         if fi.is_dir() {
-            if self.dtree.contains_key(&fi.path) {
-                eprintln!("dup path as D {}", fi.path.to_string_lossy());
+
+            if let Some(entry) = self.dtree.get_mut(&fi.path) {
+                if entry.direct.old == 0 {
+                    self.parent_filled_in_later += 1;
+                } else {
+                    self.parent_filled_in_later += 1;
+                    eprintln!("weird - not a fillin path {} with old: {}", fi.path.to_string_lossy(), entry.direct.old);
+                }
+                entry.merge(&fi.stat, false);  
             } else {
-                // if fi.path == self.root {
-                //     return Err(anyhow!("What root?  {:?}", fi));
-                // }
                 self.dtree.insert(fi.path, DirStat::new(&fi.stat));
-                //self.dtree.insert(fi.path, DirStat::new(&fi.stat));
             }
         } else if fi.is_file() || fi.is_sym() {
             let mut direct_parent = true;
+            track_top_n(&mut self.largest_file, &fi.path, fi.stat.size, cli.top_n, 0, 0);
             let mut p_path = fi.path.as_path();
             loop {
                 if let Some(_p_path) = p_path.parent() {
@@ -335,8 +348,9 @@ impl Tracking {
                         },
                         None => {
                             let p_path_buf = p_path.to_path_buf();
+                            self.parent_not_found += 1;
                             eprintln!("parent not found for (adding with empty stats):  {} from: {}", p_path_buf.to_str().unwrap(), fi.path.to_str().unwrap());
-                            //self.dtree.insert(p_path.to_path_buf(), DirStat::empty());
+                            self.dtree.insert(p_path.to_path_buf(), DirStat::empty());
                         },
                     }
                     direct_parent = false;
@@ -354,6 +368,7 @@ impl Tracking {
         }
     }
 
+   
     pub fn walk_and_heap(self: &Self, cli: &CliCfg) {
         let mut top_size: BinaryHeap<TrackedPath> = BinaryHeap::new();
         let mut top_cnt: BinaryHeap<TrackedPath> = BinaryHeap::new();
@@ -361,8 +376,8 @@ impl Tracking {
         let mut top_cnt_recur: BinaryHeap<TrackedPath> = BinaryHeap::new();
         let limit = cli.top_n;
         for (path, stat) in &self.dtree {
-            track_top_n(&mut top_size, path, stat.direct.size, limit, stat.recurse.old, stat.recurse.new);
-            track_top_n(&mut top_cnt, path, stat.direct.entry_cnt, limit, stat.recurse.old, stat.recurse.new);
+            track_top_n(&mut top_size, path, stat.direct.size, limit, stat.direct.old, stat.direct.new);
+            track_top_n(&mut top_cnt, path, stat.direct.entry_cnt, limit, stat.direct.old, stat.direct.new);
             track_top_n(&mut &mut top_size_recur, path, stat.recurse.size, limit, stat.recurse.old, stat.recurse.new);
             track_top_n(&mut &mut top_cnt_recur, path, stat.recurse.entry_cnt, limit, stat.recurse.old, stat.recurse.new);
         }
@@ -381,15 +396,22 @@ impl Tracking {
             println!("{:8} {}  age:[{}-{} D: {}]", tp.size, tp.path.to_string_lossy(), get_age(now, tp.old), get_age(now, tp.new), get_age_delta(tp.old, tp.new));
         }
 
+        fn print_tp_file(now: SystemTime, tp: &TrackedPath) {
+            println!("{} {}  age:[{}]", greek(tp.size as f64), tp.path.to_string_lossy(), get_age(now, tp.old));
+        }
+
         let now = SystemTime::now();
 
-        type print_type = for<'r> fn(SystemTime, &'r TrackedPath);
+        type PrintType = for<'r> fn(SystemTime, &'r TrackedPath);
 
+        println!("Processed {} entry Total space: {}", self.num_entries, self.total_file_space);
+        println!("Parent not found in time: {}  Parent filled in later {}", self.parent_not_found, self.parent_filled_in_later);
         for rep in [
-            ("\nTop directories based on file sizes directly in them", print_tp_size as print_type, &top_size),
-            ("\nTop directories based on entry counts directly in them", print_tp_cnt as print_type, &top_cnt),
-            ("\nTop directories based on file sizes recursively in them", print_tp_size as print_type, &top_size_recur),
-            ("\nTop directories based on file counts recursively in them", print_tp_cnt as print_type, &top_cnt_recur),
+            ("\nTop directories based on file sizes directly in them", print_tp_size as PrintType, &top_size),
+            ("\nTop directories based on file sizes recursively in them", print_tp_size as PrintType, &top_size_recur),
+            ("\nTop directories based on entry counts directly in them", print_tp_cnt as PrintType, &top_cnt),
+            ("\nTop directories based on file counts recursively in them", print_tp_cnt as PrintType, &top_cnt_recur),
+            ("\nLargest files", print_tp_file as PrintType, &self.largest_file),
         ] {
             println!("{}", rep.0);
             for tp in to_sort_vec(rep.2) {
@@ -405,6 +427,7 @@ impl Tracking {
         println!("\nTop directories based on entry count directly in them");
         for tp in to_sort_vec(&top_cnt) {
             print_tp_cnt(now, &tp)
+            
         }
     }
 }

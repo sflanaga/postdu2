@@ -11,7 +11,9 @@ global_settings(& [
     ColoredHelp, DeriveDisplayOrder]),
 )]
 /// Read a | delimited file of hdfs files and summarize the space results
-///
+/// format of input from must be pipe limited and contain these fields
+/// <filetype>|<path>|<size>|last modifification time
+/// Note filetype must be a F (for File) or D (D for directory) or S (symbolic link)
 pub struct CliCfg {
     #[structopt(short = "f", name = "file", parse(from_os_str))]
     /// input file
@@ -34,5 +36,8 @@ pub struct CliCfg {
     /// size of queue between parser and data processing
     pub data_qsize: usize,
 
+    #[structopt(short = "L", name = "process_only_some", default_value("0"))]
+    /// stops processing after X lines - used to debug things
+    pub limit_input: u64,
 
 }

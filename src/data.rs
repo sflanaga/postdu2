@@ -47,6 +47,7 @@ pub struct FileStat {
 pub struct FileInfo {
     pub path: PathBuf,
     pub stat: FileStat,
+    pub user: String,
 }
 
 pub fn uri_to_path(path: &str) -> PathBuf {
@@ -72,7 +73,7 @@ pub fn uri_to_path(path: &str) -> PathBuf {
 
 impl FileInfo {
     pub fn new(raw_rec: StringRecord) -> Result<Self> {
-        if raw_rec.len() != 4 {
+        if raw_rec.len() != 5 {
             return Err(anyhow!("field count is wrong at {}", raw_rec.len()));
         }
         Ok(FileInfo {
@@ -100,6 +101,8 @@ impl FileInfo {
                 // size: 0,
                 // mod_time: 0,
             },
+            user: raw_rec[4].to_string(),
+
         })
     }
     pub fn is_dir(self: &Self) -> bool {
@@ -215,47 +218,54 @@ impl DirStat {
 //     pub new: u64,
 // }
 
-#[derive(Eq, Debug)]
-struct TrackedPath {
+
+
+//         type PrintType = for<'r> fn(SystemTime, &'r Tracked<std::path::Display>);
+
+
+#[derive(Debug)]
+struct Tracked<T> {
     size: u64,
-    path: PathBuf,
+    track: T,
     old: u64,
     new: u64,
 }
 
-impl Ord for TrackedPath {
-    fn cmp(&self, other: &TrackedPath) -> std::cmp::Ordering {
+impl<T> Eq for Tracked<T> {}
+
+impl<T> Ord for Tracked<T> {
+    fn cmp(&self, other: &Tracked<T>) -> std::cmp::Ordering {
         self.size.cmp(&other.size).reverse()
     }
 }
 
-impl PartialOrd for TrackedPath {
-    fn partial_cmp(&self, other: &TrackedPath) -> Option<std::cmp::Ordering> {
+impl<T> PartialOrd for Tracked<T> {
+    fn partial_cmp(&self, other: &Tracked<T>) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl PartialEq for TrackedPath {
-    fn eq(&self, other: &TrackedPath) -> bool {
+impl<T> PartialEq for Tracked<T> {
+    fn eq(&self, other: &Tracked<T>) -> bool {
         self.size == other.size
     }
 }
 
-fn track_top_n(heap: &mut BinaryHeap<TrackedPath>, p: &PathBuf, s: u64, limit: usize, old: u64, new: u64) {
+fn track_top_n<T: Clone>(heap: &mut BinaryHeap<Tracked<T>>, p: &T, s: u64, limit: usize, old: u64, new: u64) {
     if limit > 0 {
         if heap.len() < limit {
-            heap.push(TrackedPath {
+            heap.push(Tracked {
                 size: s,
-                path: p.clone(),
+                track: p.clone(),
                 old,
                 new,
             });
             return;
         } else if heap.peek().expect("internal error: cannot peek when the size is greater than 0!?").size < s {
             heap.pop();
-            heap.push(TrackedPath {
+            heap.push(Tracked {
                 size: s,
-                path: p.clone(),
+                track: p.clone(),
                 old,
                 new,
             });
@@ -264,17 +274,33 @@ fn track_top_n(heap: &mut BinaryHeap<TrackedPath>, p: &PathBuf, s: u64, limit: u
     }
 }
 
-fn to_sort_vec(heap: &BinaryHeap<TrackedPath>) -> Vec<TrackedPath> {
+fn to_sort_vec<T: Clone>(heap: &BinaryHeap<Tracked<T>>) -> Vec<Tracked<T>> {
     let mut v = Vec::with_capacity(heap.len());
     for i in heap {
-        v.push(TrackedPath {
-            path: i.path.clone(),
+        v.push(Tracked {
+            track: i.track.clone(),
             size: i.size,
             old: i.old,
             new: i.new,
         });
     }
     v.sort();
+    v
+}
+
+fn to_sort_vec_name_cnt(m: &HashMap<String,(u64,u64)>) -> Vec<(String,u64)> {
+    let mut v = m.iter()
+    .map(|(n,t)| (n.clone(),t.1))
+    .collect::<Vec<(String,u64)>>();
+    v.sort_by(|a,b| b.1.partial_cmp(&a.1).unwrap());
+    v
+}
+
+fn to_sort_vec_name_size(m: &HashMap<String,(u64,u64)>) -> Vec<(String,u64)> {
+    let mut v = m.iter()
+    .map(|(n,t)| (n.clone(),t.0))
+    .collect::<Vec<(String,u64)>>();
+    v.sort_by(|a,b| b.1.partial_cmp(&a.1).unwrap());
     v
 }
 
@@ -295,12 +321,25 @@ pub fn get_age_delta(old: u64, new: u64) -> String {
 pub struct Tracking {
     dtree: HashMap<PathBuf, DirStat>,
     root: PathBuf,
-    largest_file: BinaryHeap<TrackedPath>,
+    largest_file: BinaryHeap<Tracked<PathBuf>>,
+    largest_user: HashMap<String,(u64, u64)>,
     num_entries: u64,
     total_file_space: u64,
     parent_not_found: u64,
     parent_filled_in_later: u64,
 }
+
+fn print_tp_size(now: SystemTime, tp: &Tracked<PathBuf>) {
+    println!(
+        "{} {}  age:[{}-{} D: {}]",
+        greek(tp.size as f64),
+        tp.track.display(),
+        get_age(now, tp.old),
+        get_age(now, tp.new),
+        get_age_delta(tp.old, tp.new)
+    );
+}
+
 
 impl Tracking {
     pub fn new() -> Tracking {
@@ -310,6 +349,7 @@ impl Tracking {
             num_entries: 0,
             total_file_space: 0,
             largest_file: BinaryHeap::new(),
+            largest_user: HashMap::new(),
             parent_not_found: 0,
             parent_filled_in_later: 0,
         }
@@ -319,6 +359,13 @@ impl Tracking {
 
         self.total_file_space += fi.stat.size;
         self.num_entries += 1;
+
+        if let Some(user_entry) = self.largest_user.get_mut(&fi.user) {
+            user_entry.0 += fi.stat.size;
+            user_entry.1 += 1;
+        } else {
+            self.largest_user.insert(fi.user.clone(), (fi.stat.size,1));
+        }
 
         if fi.is_dir() {
 
@@ -370,10 +417,10 @@ impl Tracking {
 
    
     pub fn walk_and_heap(self: &Self, cli: &CliCfg) {
-        let mut top_size: BinaryHeap<TrackedPath> = BinaryHeap::new();
-        let mut top_cnt: BinaryHeap<TrackedPath> = BinaryHeap::new();
-        let mut top_size_recur: BinaryHeap<TrackedPath> = BinaryHeap::new();
-        let mut top_cnt_recur: BinaryHeap<TrackedPath> = BinaryHeap::new();
+        let mut top_size: BinaryHeap<Tracked<PathBuf>> = BinaryHeap::new();
+        let mut top_cnt: BinaryHeap<Tracked<PathBuf>> = BinaryHeap::new();
+        let mut top_size_recur: BinaryHeap<Tracked<PathBuf>> = BinaryHeap::new();
+        let mut top_cnt_recur: BinaryHeap<Tracked<PathBuf>> = BinaryHeap::new();
         let limit = cli.top_n;
         for (path, stat) in &self.dtree {
             track_top_n(&mut top_size, path, stat.direct.size, limit, stat.direct.old, stat.direct.new);
@@ -382,36 +429,38 @@ impl Tracking {
             track_top_n(&mut &mut top_cnt_recur, path, stat.recurse.entry_cnt, limit, stat.recurse.old, stat.recurse.new);
         }
 
-        fn print_tp_size(now: SystemTime, tp: &TrackedPath) {
-            println!(
-                "{} {}  age:[{}-{} D: {}]",
-                greek(tp.size as f64),
-                tp.path.to_string_lossy(),
-                get_age(now, tp.old),
-                get_age(now, tp.new),
-                get_age_delta(tp.old, tp.new)
-            );
-        }
-        fn print_tp_cnt(now: SystemTime, tp: &TrackedPath) {
-            println!("{:8} {}  age:[{}-{} D: {}]", tp.size, tp.path.to_string_lossy(), get_age(now, tp.old), get_age(now, tp.new), get_age_delta(tp.old, tp.new));
+        fn print_tp_cnt(now: SystemTime, tp: &Tracked<PathBuf>) {
+            println!("{:8} {}  age:[{}-{} D: {}]", tp.size, tp.track.to_string_lossy(), get_age(now, tp.old), get_age(now, tp.new), get_age_delta(tp.old, tp.new));
         }
 
-        fn print_tp_file(now: SystemTime, tp: &TrackedPath) {
-            println!("{} {}  age:[{}]", greek(tp.size as f64), tp.path.to_string_lossy(), get_age(now, tp.old));
+        fn print_tp_file(now: SystemTime, tp: &Tracked<PathBuf>) {
+            println!("{} {}  age:[{}]", greek(tp.size as f64), tp.track.to_string_lossy(), get_age(now, tp.old));
         }
 
         let now = SystemTime::now();
 
-        type PrintType = for<'r> fn(SystemTime, &'r TrackedPath);
+        type PrintTypePath = for<'r> fn(SystemTime, &'r Tracked<PathBuf>);
 
         println!("Processed {} entry Total space: {}", self.num_entries, greek(self.total_file_space as f64));
         println!("Parent not found in time: {}  Parent filled in later {}", self.parent_not_found, self.parent_filled_in_later);
+
+        println!("\nTop usage by user ID");
+        for (n, a) in to_sort_vec_name_size(&self.largest_user).iter().take(cli.top_n) {
+
+            println!("{} {}", greek(*a as f64), &n);
+        }
+
+        println!("\nTop usage by user file count");
+        for (n, a) in to_sort_vec_name_cnt(&self.largest_user).iter().take(cli.top_n) {
+            println!("{:8} {}", a, &n);
+        }
+
         for rep in [
-            ("\nTop directories based on file sizes directly in them", print_tp_size as PrintType, &top_size),
-            ("\nTop directories based on file sizes recursively in them", print_tp_size as PrintType, &top_size_recur),
-            ("\nTop directories based on entry counts directly in them", print_tp_cnt as PrintType, &top_cnt),
-            ("\nTop directories based on file counts recursively in them", print_tp_cnt as PrintType, &top_cnt_recur),
-            ("\nLargest files", print_tp_file as PrintType, &self.largest_file),
+            ("\nTop directories based on file sizes directly in them", print_tp_size as PrintTypePath, &top_size),
+            ("\nTop directories based on file sizes recursively in them", print_tp_size as PrintTypePath, &top_size_recur),
+            ("\nTop directories based on entry counts directly in them", print_tp_cnt as PrintTypePath, &top_cnt),
+            ("\nTop directories based on file counts recursively in them", print_tp_cnt as PrintTypePath, &top_cnt_recur),
+            ("\nLargest files", print_tp_file as PrintTypePath, &self.largest_file),
         ] {
             println!("{}", rep.0);
             for tp in to_sort_vec(rep.2) {

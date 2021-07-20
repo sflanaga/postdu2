@@ -404,7 +404,7 @@ impl Tracking {
 
         type PrintType = for<'r> fn(SystemTime, &'r TrackedPath);
 
-        println!("Processed {} entry Total space: {}", self.num_entries, self.total_file_space);
+        println!("Processed {} entry Total space: {}", self.num_entries, greek(self.total_file_space as f64));
         println!("Parent not found in time: {}  Parent filled in later {}", self.parent_not_found, self.parent_filled_in_later);
         for rep in [
             ("\nTop directories based on file sizes directly in them", print_tp_size as PrintType, &top_size),
@@ -427,7 +427,7 @@ impl Tracking {
         println!("\nTop directories based on entry count directly in them");
         for tp in to_sort_vec(&top_cnt) {
             print_tp_cnt(now, &tp)
-            
+
         }
     }
 }

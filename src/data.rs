@@ -274,6 +274,7 @@ fn track_top_n<T: Clone>(heap: &mut BinaryHeap<Tracked<T>>, p: &T, s: u64, limit
     }
 }
 
+
 fn to_sort_vec<T: Clone>(heap: &BinaryHeap<Tracked<T>>) -> Vec<Tracked<T>> {
     let mut v = Vec::with_capacity(heap.len());
     for i in heap {
@@ -323,6 +324,7 @@ pub struct Tracking {
     root: PathBuf,
     largest_file: BinaryHeap<Tracked<PathBuf>>,
     largest_user: HashMap<String,(u64, u64)>,
+    largest_time: BTreeMap<u64, u64>,
     num_entries: u64,
     total_file_space: u64,
     parent_not_found: u64,
@@ -350,6 +352,7 @@ impl Tracking {
             total_file_space: 0,
             largest_file: BinaryHeap::new(),
             largest_user: HashMap::new(),
+            largest_time: BTreeMap::new(),
             parent_not_found: 0,
             parent_filled_in_later: 0,
         }
@@ -382,7 +385,15 @@ impl Tracking {
             }
         } else if fi.is_file() || fi.is_sym() {
             let mut direct_parent = true;
-            track_top_n(&mut self.largest_file, &fi.path, fi.stat.size, cli.top_n, 0, 0);
+            const WEEK_BUCKET_JAVA_MS: u64 = 1000 * 3600 * 24 * 7;
+            let week_bucket = (fi.stat.mod_time / (WEEK_BUCKET_JAVA_MS)) * WEEK_BUCKET_JAVA_MS;
+            if let Some(entry) = self.largest_time.get_mut(&week_bucket) {
+                *entry += fi.stat.size;
+            } else {
+                self.largest_time.insert(week_bucket, fi.stat.size);
+            }
+
+            track_top_n(&mut self.largest_file, &fi.path, fi.stat.size, cli.top_n, fi.stat.mod_time, 0);
             let mut p_path = fi.path.as_path();
             loop {
                 if let Some(_p_path) = p_path.parent() {
@@ -446,7 +457,6 @@ impl Tracking {
 
         println!("\nTop usage by user ID");
         for (n, a) in to_sort_vec_name_size(&self.largest_user).iter().take(cli.top_n) {
-
             println!("{} {}", greek(*a as f64), &n);
         }
 
@@ -468,15 +478,27 @@ impl Tracking {
             }
         }
 
-        println!("\nTop directories based on file directly in them");
-        for tp in to_sort_vec(&top_size) {
-            print_tp_size(now, &tp);
+        fn largest_time_to_sort_vec(time_size: &BTreeMap<u64,u64>) -> Vec<(u64,u64)> {
+            let mut v = time_size.iter().map(|(t,s)| (*t,*s)).collect::<Vec<(u64,u64)>>();
+            v.sort_by(|a,b| b.0.partial_cmp(&a.0).unwrap());
+            v
         }
-
-        println!("\nTop directories based on entry count directly in them");
-        for tp in to_sort_vec(&top_cnt) {
-            print_tp_cnt(now, &tp)
-
+        
+        println!("\nTop timeframes based on size (time->size)");
+        for tf in largest_time_to_sort_vec(&self.largest_time) {
+            println!("{} {}", get_age(now, tf.0), greek(tf.1 as f64));
         }
+        
+
+        // println!("\nTop directories based on file directly in them");
+        // for tp in to_sort_vec(&top_size) {
+        //     print_tp_size(now, &tp);
+        // }
+
+        // println!("\nTop directories based on entry count directly in them");
+        // for tp in to_sort_vec(&top_cnt) {
+        //     print_tp_cnt(now, &tp)
+
+        // }
     }
 }

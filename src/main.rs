@@ -1,25 +1,19 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
-use std::{
-    collections::{self, BTreeMap},
-    fs::File,
-    io::BufReader,
-    path::PathBuf,
-    str::FromStr,
-    time::{Duration, Instant},
-};
+use std::{collections::{self, BTreeMap}, fs::File, io::{BufReader, Read}, path::PathBuf, str::FromStr, time::{Duration, Instant}};
 
 use crate::{
     cli::CliCfg,
     data::{dur_to_str, uri_to_path, FileInfo, Tracking},
 };
 use csv::{StringRecord, StringRecordsIter};
+use flate2::bufread::GzDecoder;
 use structopt::StructOpt;
 
 mod cli;
 mod data;
 
-use anyhow::{Context, Error, Result};
+use anyhow::{anyhow, Context, Error, Result};
 
 fn main() -> Result<()> {
     // println!("{}", dur_to_str(Duration::from_secs(1800)));
@@ -43,8 +37,16 @@ fn main() -> Result<()> {
         .escape(Some(b'\\'))
         .comment(Some(b'#'));
 
-    let file = File::open(&cfg.file)?;
-    let buf = BufReader::with_capacity(1024 * 256, &file);
+    //let file = File::open(&cfg.file)?;
+    let stdin = std::io::stdin();
+    let lock_stdin = stdin.lock();
+    let buf = if cfg.file.is_some()  {
+        let file: PathBuf = cfg.file.as_ref().unwrap().clone();
+        openfile(&file)?
+    } else {
+        Box::new(BufReader::new(lock_stdin))  
+    };
+    //let buf = openfile(&cfg.file)?; // BufReader::with_capacity(1024 * 256, &file);
     let mut rdr = csv_vbld.from_reader(buf);
 
     let mut line_count = 0u64;
@@ -134,4 +136,50 @@ fn main() -> Result<()> {
     let _ = data_thread.join();
     println!("{:?}", start.elapsed());
     Ok(())
+}
+
+
+fn openfile(path: &PathBuf) -> Result<Box<dyn Read>> {
+    let ext = {
+        match path.to_str().unwrap().rfind('.') {
+            None => String::from(""),
+            Some(i) => String::from(&path.to_str().unwrap()[i..]),
+        }
+    };
+    let mut rdr: Box<dyn Read> = match &ext[..] {
+        ".gz" | ".tgz" => {
+            match File::open(&path) {
+                Ok(f) => Box::new( GzDecoder::new(BufReader::new(f))),
+                Err(err) => return Err(anyhow!("skipping gz file \"{}\", due to error: {}", path.display(), err)),
+            }
+        }
+        ".zst" | ".zstd" => {
+            match File::open(&path) {
+                Ok(f) => {
+                    match zstd::stream::read::Decoder::new(BufReader::new(f)) {
+                        Ok(br) => Box::new(br),
+                        Err(err) => return Err(anyhow!("skipping file \"{}\", zstd decoder error: {}", path.display(), err)),
+                    }
+                }
+                Err(err) => return Err(anyhow!("skipping zst file \"{}\", due to error: {}", path.display(), err)),
+            }
+        }
+        // ".bz2" | ".tbz2" | ".txz" | ".xz" | ".lz4" | ".lzma" | ".br" | ".Z" => {
+        //     match DecompressionReader::new(&path) {
+        //         Ok(rdr) => Box::new(rdr),
+        //         Err(err) => {
+        //             eprintln!("skipping general de-comp file \"{}\", due to error: {}", path.display(), err);
+        //             continue;
+        //         }
+        //     }
+        // }
+        _ => {
+            match File::open(&path) {
+                Ok(f) => Box::new(BufReader::new(f)),
+                Err(err) => return Err(anyhow!("skipping regular file \"{}\", due to error: {}", path.display(), err)),
+            }
+        },
+    };
+    return Ok(rdr);
+
 }

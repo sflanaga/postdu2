@@ -17,7 +17,7 @@ global_settings(& [
 pub struct CliCfg {
     #[structopt(short = "f", name = "file", parse(from_os_str))]
     /// input file
-    pub file: PathBuf,
+    pub file: Option<PathBuf>,
 
     #[structopt(short = "n", name = "top_n")]
     /// input file

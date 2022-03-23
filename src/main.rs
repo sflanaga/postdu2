@@ -24,7 +24,6 @@ fn main() -> Result<()> {
     // println!("{:?}", uri_to_path("hdfs://EBDASTAGING/amshbase"));
     // std::process::exit(0);
 
-    println!("Hello   there!");
     let cfg: CliCfg = CliCfg::from_args();
 
     let mut bld = csv::ReaderBuilder::new();
@@ -109,11 +108,25 @@ fn main() -> Result<()> {
     //})).collect::<Vec<_>>();
 
     let mut field_count = 0 ;
+    let start_time = Instant::now();
+    let mut last_time = start_time;
+    let mut last_rec_count = 0u64;
     for rec in rdr.records() {
         line_count += 1;
-        if line_count % 1_000_000 == 0 {
-            println!("at line {}", line_count);
+        if cfg.ticker_interval_secs > 0 {
+            let now_time = Instant::now();
+            let delta_time = now_time - last_time;
+            if delta_time.as_secs() > cfg.ticker_interval_secs {
+                let delta_count = line_count - last_rec_count;
+                if delta_count > 0 {
+                    let rate = delta_count / delta_time.as_secs();
+                    eprintln!("records so far line {}  rate: {} / sec", line_count, rate);
+                }
+                last_time = now_time;
+                last_rec_count = line_count;
+            }
         }
+
         if cfg.limit_input>0 && line_count > cfg.limit_input  {
             break;
         }

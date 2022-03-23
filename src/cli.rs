@@ -24,7 +24,7 @@ pub struct CliCfg {
     pub top_n: usize,
 
 
-    #[structopt(short = "t", name = "num_rec_threads", default_value("4"))]
+    #[structopt(short = "t", name = "num_rec_threads", default_value("3"))]
     /// number of threads that turn array of strings into FileInfo records
     pub num_rec_threads: usize,
 
@@ -40,4 +40,7 @@ pub struct CliCfg {
     /// stops processing after X lines - used to debug things
     pub limit_input: u64,
 
+    #[structopt(short = "i", name = "ticker_interval_secs", default_value("1"))]
+    /// ticker timer in seconds - 0 means none
+    pub ticker_interval_secs: u64
 }

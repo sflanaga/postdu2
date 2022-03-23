@@ -39,14 +39,25 @@ fn main() -> Result<()> {
     //let file = File::open(&cfg.file)?;
     let stdin = std::io::stdin();
     let lock_stdin = stdin.lock();
-    let buf = if cfg.file.is_some()  {
+    let reader: Box<dyn Read> = if cfg.file.is_some()  {
+
         let file: PathBuf = cfg.file.as_ref().unwrap().clone();
         openfile(&file)?
+
+
     } else {
-        Box::new(BufReader::new(lock_stdin))  
+        if cfg.stdin_zstd {
+            let stdin = BufReader::new(lock_stdin);
+            match zstd::stream::read::Decoder::new(stdin) {
+                Ok(br) => Box::new(br),
+                Err(err) => return Err(anyhow!("Unable to wrap standard in put with zstd decoder, zstd decoder error: {}", err)),
+            }
+        } else {
+            Box::new(BufReader::new(lock_stdin))
+        }
     };
     //let buf = openfile(&cfg.file)?; // BufReader::with_capacity(1024 * 256, &file);
-    let mut rdr = csv_vbld.from_reader(buf);
+    let mut rdr = csv_vbld.from_reader(reader);
 
     let mut line_count = 0u64;
 

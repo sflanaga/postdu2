@@ -23,7 +23,6 @@ pub struct CliCfg {
     /// input file
     pub top_n: usize,
 
-
     #[structopt(short = "t", name = "num_rec_threads", default_value("3"))]
     /// number of threads that turn array of strings into FileInfo records
     pub num_rec_threads: usize,
@@ -42,5 +41,9 @@ pub struct CliCfg {
 
     #[structopt(short = "i", name = "ticker_interval_secs", default_value("1"))]
     /// ticker timer in seconds - 0 means none
-    pub ticker_interval_secs: u64
+    pub ticker_interval_secs: u64,
+
+    #[structopt(short = "z", name = "input_stdin_is_zstd")]
+    /// ticker timer in seconds - 0 means none
+    pub stdin_zstd: bool
 }
